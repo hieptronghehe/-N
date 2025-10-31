@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 import argparse
 from pathlib import Path
 
@@ -97,11 +98,9 @@ def main():
     recorder.save()
 
 
-if __name__ == "__main__":
-    main()
 from ultralytics import YOLO
-import cv2
 import csv
+
 
 def main():
     model_path = r"D:\Download\Video\best1.pt"
@@ -114,46 +113,56 @@ def main():
         print("❌ Không mở được video")
         return
 
-    # Danh sách lưu detections (mỗi dòng sẽ chứa frame, label, confidence, x, y)
-    detections = []
+    out_path = r"D:\Download\Video\detections.csv"
+    # Initialize CSV: overwrite and write header
+    try:
+        with open(out_path, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['frame', 'label', 'confidence', 'x', 'y', 'time'])
+    except Exception as e:
+        print(f"❌ Không thể tạo file CSV: {e}")
+        return
+
     frame_idx = 0
+    buffer = []  # buffer detections within the current 1s window
+    last_save_time = time.time()
+
+    print("Bắt đầu xử lý video, detections sẽ được lưu vào CSV mỗi 1 giây nếu có.")
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            # Khi video kết thúc, quay lại đầu video
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            continue
+            # Nếu muốn chỉ chạy 1 lần đến hết video, break
+            print("Kết thúc video.")
+            break
 
         # Dự đoán
         results = model(frame, device=0, conf=0.3, imgsz=640, half=True, verbose=False)
 
+        now = time.time()
         for r in results:
             for box in r.boxes:
-                # Lấy toạ độ pixel
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 cls_id = int(box.cls[0])
-                label = model.names[cls_id]
-
-                # Tính tâm bbox (x, y)
+                label = model.names.get(cls_id, str(cls_id))
                 cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
-
-                # Lấy confidence nếu có
                 try:
                     conf = float(box.conf[0])
                 except Exception:
                     conf = None
 
-                # Lưu thông tin detection (chỉ x,y như yêu cầu)
-                detections.append({
+               
+                buffer.append({
                     'frame': frame_idx,
                     'label': label,
                     'confidence': round(conf, 4) if conf is not None else None,
                     'x': cx,
-                    'y': cy
+                    'y': cy,
+                    # use global UTC ISO timestamp
+                    'time': datetime.now(timezone.utc).isoformat(),
                 })
 
-                # Vẽ khung + hiển thị thông tin gọn (vẫn giữ để quan sát)
+                # Vẽ khung + hiển thị thông tin gọn
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 text = f"{label} ({cx},{cy})"
                 text_size, _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
@@ -164,30 +173,40 @@ def main():
 
         cv2.imshow("YOLOv8 Live Detection", frame)
 
+        # mỗi 1 giây, ghi buffer vào file CSV (append) và reset buffer
+        if time.time() - last_save_time >= 1.0:
+            if buffer:
+                try:
+                    with open(out_path, mode='a', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        for d in buffer:
+                            writer.writerow([d['frame'], d['label'], d['confidence'], d['x'], d['y'], d['time']])
+                    print(f"Saved {len(buffer)} detections to {out_path} (timestamp: {last_save_time})")
+                except Exception as e:
+                    print(f"❌ Lỗi khi ghi CSV: {e}")
+                buffer.clear()
+            last_save_time = time.time()
+
         # ESC để thoát
         if cv2.waitKey(1) & 0xFF == 27:
             break
 
         frame_idx += 1
 
+    # write remaining buffer on exit
+    if buffer:
+        try:
+            with open(out_path, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                for d in buffer:
+                    writer.writerow([d['frame'], d['label'], d['confidence'], d['x'], d['y'], d['time']])
+            print(f"Saved remaining {len(buffer)} detections to {out_path}")
+        except Exception as e:
+            print(f"❌ Lỗi khi ghi CSV cuối: {e}")
+
     cap.release()
     cv2.destroyAllWindows()
 
-    # Xuất detections ra CSV (chỉ các cột x,y cùng một vài metadata)
-    try:
-        if len(detections) == 0:
-            print("Không có detections để lưu.")
-            return
-        out_path = r"D:\Download\Video\detections.csv"
-        # Ghi CSV với các cột: frame,label,confidence,x,y
-        with open(out_path, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['frame', 'label', 'confidence', 'x', 'y'])
-            for d in detections:
-                writer.writerow([d.get('frame'), d.get('label'), d.get('confidence'), d.get('x'), d.get('y')])
-        print(f"✅ Lưu detections xong: {out_path}")
-    except Exception as e:
-        print(f"❌ Lỗi khi lưu CSV: {e}")
 
 if __name__ == "__main__":
     main()
