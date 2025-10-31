@@ -152,6 +152,7 @@ def main():
                     conf = None
 
                 # Skip unwanted moc labels
+                #hgidofdob
                 if isinstance(label, str) and label.lower() in {"moc1", "moc2", "moc3", "moc4"}:
                     continue
 
