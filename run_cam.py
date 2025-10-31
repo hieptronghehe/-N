@@ -118,11 +118,11 @@ def main():
         return
 
     out_path = r"D:\Download\Video\detections.csv"
-    # Initialize CSV: overwrite and write header
+    # Initialize CSV: overwrite and write header using pandas to ensure correct dtypes later
     try:
-        with open(out_path, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['frame', 'label', 'confidence', 'X', 'Y', 'time'])
+        import pandas as _pd_init
+        hdr_df = _pd_init.DataFrame(columns=['frame', 'label', 'confidence', 'X', 'Y', 'time'])
+        hdr_df.to_csv(out_path, index=False, encoding='utf-8')
     except Exception as e:
         print(f"❌ Không thể tạo file CSV: {e}")
         return
@@ -194,11 +194,23 @@ def main():
         if time.time() - last_save_time >= 1.0:
             if buffer:
                 try:
-                    with open(out_path, mode='a', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
-                        for d in buffer:
-                            writer.writerow([d['frame'], d['label'], d['confidence'], d['X'], d['Y'], d['time']])
-                    print(f"Saved {len(buffer)} detections to {out_path} (timestamp: {last_save_time})")
+                    # Convert buffer to DataFrame and coerce numeric types to avoid Excel treating numbers as text
+                    df = pd.DataFrame(buffer)
+                    if not df.empty:
+                        # clean string fields
+                        df['label'] = df['label'].astype(str).str.lstrip("'").str.strip()
+                        df['time'] = df['time'].astype(str).str.lstrip("'")
+                        # coerce numeric columns
+                        df['frame'] = pd.to_numeric(df['frame'], errors='coerce').astype('Int64')
+                        df['confidence'] = pd.to_numeric(df['confidence'], errors='coerce')
+                        df['X'] = pd.to_numeric(df['X'], errors='coerce')
+                        df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
+
+                        # append to CSV with a consistent float format
+                        df.to_csv(out_path, mode='a', header=False, index=False, float_format='%.6f', encoding='utf-8')
+                        print(f"Saved {len(buffer)} detections to {out_path} (timestamp: {last_save_time})")
+                    else:
+                        print("Buffer empty, nothing to save")
                 except Exception as e:
                     print(f"❌ Lỗi khi ghi CSV: {e}")
                 buffer.clear()
@@ -213,11 +225,18 @@ def main():
     # write remaining buffer on exit
     if buffer:
         try:
-            with open(out_path, mode='a', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                for d in buffer:
-                    writer.writerow([d['frame'], d['label'], d['confidence'], d['X'], d['Y'], d['time']])
-            print(f"Saved remaining {len(buffer)} detections to {out_path}")
+            df = pd.DataFrame(buffer)
+            if not df.empty:
+                df['label'] = df['label'].astype(str).str.lstrip("'").str.strip()
+                df['time'] = df['time'].astype(str).str.lstrip("'")
+                df['frame'] = pd.to_numeric(df['frame'], errors='coerce').astype('Int64')
+                df['confidence'] = pd.to_numeric(df['confidence'], errors='coerce')
+                df['X'] = pd.to_numeric(df['X'], errors='coerce')
+                df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
+                df.to_csv(out_path, mode='a', header=False, index=False, float_format='%.6f', encoding='utf-8')
+                print(f"Saved remaining {len(buffer)} detections to {out_path}")
+            else:
+                print("No remaining detections to save.")
         except Exception as e:
             print(f"❌ Lỗi khi ghi CSV cuối: {e}")
 
