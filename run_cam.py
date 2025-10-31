@@ -151,7 +151,10 @@ def main():
                 except Exception:
                     conf = None
 
-               
+                # Skip unwanted moc labels
+                if isinstance(label, str) and label.lower() in {"moc1", "moc2", "moc3", "moc4"}:
+                    continue
+
                 buffer.append({
                     'frame': frame_idx,
                     'label': label,
