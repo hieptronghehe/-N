@@ -6,6 +6,8 @@ from pathlib import Path
 
 import cv2
 import pandas as pd
+import numpy as np
+from chuyendoitoado import get_projection_matrix
 
 
 class CoordRecorder:
@@ -105,6 +107,8 @@ import csv
 def main():
     model_path = r"D:\Download\Video\best1.pt"
     model = YOLO(model_path)
+    # load projection matrix (homography) to convert pixel -> project coordinates
+    proj_matrix = get_projection_matrix().astype('float32')
 
     # Đường dẫn đến file video
     video_path = r"D:\Download\Video\3.mp4"
@@ -118,7 +122,7 @@ def main():
     try:
         with open(out_path, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['frame', 'label', 'confidence', 'x', 'y', 'time'])
+            writer.writerow(['frame', 'label', 'confidence', 'X', 'Y', 'time'])
     except Exception as e:
         print(f"❌ Không thể tạo file CSV: {e}")
         return
@@ -151,17 +155,26 @@ def main():
                 except Exception:
                     conf = None
 
-                # Skip unwanted moc labels
-                #hgidofdob
-                if isinstance(label, str) and label.lower() in {"moc1", "moc2", "moc3", "moc4"}:
+                # Skip unwanted moc labels (case-insensitive)
+                if label.lower() in {"moc1", "moc2", "moc3", "moc4"}:
                     continue
+
+                # Transform pixel center (cx,cy) -> project coordinates using homography
+                try:
+                    pt = np.array([[[float(cx), float(cy)]]], dtype=np.float32)
+                    tpt = cv2.perspectiveTransform(pt, proj_matrix)
+                    tx, ty = float(tpt[0, 0, 0]), float(tpt[0, 0, 1])
+                except Exception as e:
+                    # If transform fails, fall back to pixel coords
+                    print(f"⚠️ Transform failed for point ({cx},{cy}): {e}")
+                    tx, ty = float(cx), float(cy)
 
                 buffer.append({
                     'frame': frame_idx,
                     'label': label,
                     'confidence': round(conf, 4) if conf is not None else None,
-                    'x': cx,
-                    'y': cy,
+                    'X': tx,
+                    'Y': ty,
                     # use global UTC ISO timestamp
                     'time': datetime.now(timezone.utc).isoformat(),
                 })
@@ -184,7 +197,7 @@ def main():
                     with open(out_path, mode='a', newline='', encoding='utf-8') as f:
                         writer = csv.writer(f)
                         for d in buffer:
-                            writer.writerow([d['frame'], d['label'], d['confidence'], d['x'], d['y'], d['time']])
+                            writer.writerow([d['frame'], d['label'], d['confidence'], d['X'], d['Y'], d['time']])
                     print(f"Saved {len(buffer)} detections to {out_path} (timestamp: {last_save_time})")
                 except Exception as e:
                     print(f"❌ Lỗi khi ghi CSV: {e}")
@@ -203,7 +216,7 @@ def main():
             with open(out_path, mode='a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 for d in buffer:
-                    writer.writerow([d['frame'], d['label'], d['confidence'], d['x'], d['y'], d['time']])
+                    writer.writerow([d['frame'], d['label'], d['confidence'], d['X'], d['Y'], d['time']])
             print(f"Saved remaining {len(buffer)} detections to {out_path}")
         except Exception as e:
             print(f"❌ Lỗi khi ghi CSV cuối: {e}")
