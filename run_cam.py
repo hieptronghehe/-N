@@ -101,7 +101,7 @@ def main():
 
 
 from ultralytics import YOLO
-import csv
+import db_manage
 
 
 def main():
@@ -117,21 +117,21 @@ def main():
         print("❌ Không mở được video")
         return
 
-    out_path = r"D:\Download\Video\detections.csv"
-    # Initialize CSV: overwrite and write header using pandas to ensure correct dtypes later
+    # Prepare DB
+    db_path = r"D:\Download\Video\data.db"
+    # ensure parent folder exists
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     try:
-        import pandas as _pd_init
-        hdr_df = _pd_init.DataFrame(columns=['frame', 'label', 'confidence', 'X', 'Y', 'time'])
-        hdr_df.to_csv(out_path, index=False, encoding='utf-8')
+        db_manage.create_temp_table(db_path)
     except Exception as e:
-        print(f"❌ Không thể tạo file CSV: {e}")
+        print(f"❌ Không thể tạo/kiểm tra database: {e}")
         return
 
     frame_idx = 0
     buffer = []  # buffer detections within the current 1s window
     last_save_time = time.time()
 
-    print("Bắt đầu xử lý video, detections sẽ được lưu vào CSV mỗi 1 giây nếu có.")
+    print("Bắt đầu xử lý video, detections sẽ được lưu vào database mỗi 1 giây nếu có.")
 
     while True:
         ret, frame = cap.read()
@@ -190,29 +190,38 @@ def main():
 
         cv2.imshow("YOLOv8 Live Detection", frame)
 
-        # mỗi 1 giây, ghi buffer vào file CSV (append) và reset buffer
+        # mỗi 1 giây, ghi buffer vào database (append) và reset buffer
         if time.time() - last_save_time >= 1.0:
             if buffer:
                 try:
-                    # Convert buffer to DataFrame and coerce numeric types to avoid Excel treating numbers as text
-                    df = pd.DataFrame(buffer)
-                    if not df.empty:
-                        # clean string fields
-                        df['label'] = df['label'].astype(str).str.lstrip("'").str.strip()
-                        df['time'] = df['time'].astype(str).str.lstrip("'")
-                        # coerce numeric columns
-                        df['frame'] = pd.to_numeric(df['frame'], errors='coerce').astype('Int64')
-                        df['confidence'] = pd.to_numeric(df['confidence'], errors='coerce')
-                        df['X'] = pd.to_numeric(df['X'], errors='coerce')
-                        df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
+                    # Prepare list of (x_location, y_location, person_ID)
+                    db_rows = []
+                    person_map = {'songoku': 1, 'dog': 2}
+                    for d in buffer:
+                        try:
+                            x_val = int(round(float(d.get('X', 0))))
+                        except Exception:
+                            x_val = None
+                        try:
+                            y_val = int(round(float(d.get('Y', 0))))
+                        except Exception:
+                            y_val = None
+                        if x_val is None or y_val is None:
+                            continue
+                        lbl = str(d.get('label', '')).lower()
+                        if lbl in {"moc1", "moc2", "moc3", "moc4"}:
+                            continue
+                        person_id = person_map.get(lbl)
+                        # person_id may be None -> inserted as NULL
+                        db_rows.append((x_val, y_val, person_id))
 
-                        # append to CSV with a consistent float format
-                        df.to_csv(out_path, mode='a', header=False, index=False, float_format='%.6f', encoding='utf-8')
-                        print(f"Saved {len(buffer)} detections to {out_path} (timestamp: {last_save_time})")
+                    if db_rows:
+                        db_manage.add_many_temp(db_path, db_rows)
+                        print(f"Inserted {len(db_rows)} rows into DB: {db_path} (timestamp: {last_save_time})")
                     else:
-                        print("Buffer empty, nothing to save")
+                        print("No valid rows to insert into DB")
                 except Exception as e:
-                    print(f"❌ Lỗi khi ghi CSV: {e}")
+                    print(f"❌ Lỗi khi ghi DB: {e}")
                 buffer.clear()
             last_save_time = time.time()
 
@@ -222,23 +231,35 @@ def main():
 
         frame_idx += 1
 
-    # write remaining buffer on exit
+    # write remaining buffer on exit -> insert into DB
     if buffer:
         try:
-            df = pd.DataFrame(buffer)
-            if not df.empty:
-                df['label'] = df['label'].astype(str).str.lstrip("'").str.strip()
-                df['time'] = df['time'].astype(str).str.lstrip("'")
-                df['frame'] = pd.to_numeric(df['frame'], errors='coerce').astype('Int64')
-                df['confidence'] = pd.to_numeric(df['confidence'], errors='coerce')
-                df['X'] = pd.to_numeric(df['X'], errors='coerce')
-                df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
-                df.to_csv(out_path, mode='a', header=False, index=False, float_format='%.6f', encoding='utf-8')
-                print(f"Saved remaining {len(buffer)} detections to {out_path}")
+            db_rows = []
+            person_map = {'songoku': 1, 'dog': 2}
+            for d in buffer:
+                try:
+                    x_val = int(round(float(d.get('X', 0))))
+                except Exception:
+                    x_val = None
+                try:
+                    y_val = int(round(float(d.get('Y', 0))))
+                except Exception:
+                    y_val = None
+                if x_val is None or y_val is None:
+                    continue
+                lbl = str(d.get('label', '')).lower()
+                if lbl in {"moc1", "moc2", "moc3", "moc4"}:
+                    continue
+                person_id = person_map.get(lbl)
+                db_rows.append((x_val, y_val, person_id))
+
+            if db_rows:
+                db_manage.add_many_temp(db_path, db_rows)
+                print(f"Inserted remaining {len(db_rows)} rows into DB: {db_path}")
             else:
-                print("No remaining detections to save.")
+                print("No remaining valid rows to insert into DB")
         except Exception as e:
-            print(f"❌ Lỗi khi ghi CSV cuối: {e}")
+            print(f"❌ Lỗi khi ghi DB cuối: {e}")
 
     cap.release()
     cv2.destroyAllWindows()
