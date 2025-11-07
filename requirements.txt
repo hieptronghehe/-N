@@ -3,3 +3,5 @@ pandas
 openpyxl
 pandas
 openpyxl
+mysql-connector-python
+SQLAlchemy
